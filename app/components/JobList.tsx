@@ -43,6 +43,26 @@ interface JobMatch {
   top_strengths: string[];
   main_concerns: string[];
   recommendation: string;
+  candidate_name?: string;
+  candidate_email?: string;
+  candidate_experience?: number;
+}
+
+interface CandidateDetails {
+  id: string;
+  parsed_data: {
+    personal_info: {
+      full_name?: string;
+      email?: string;
+      phone?: string;
+      location?: string;
+    };
+    experience: {
+      total_years?: number;
+      current_position?: string;
+    };
+    skills: any;
+  };
 }
 
 export default function JobList() {
@@ -54,6 +74,7 @@ export default function JobList() {
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [jobMatches, setJobMatches] = useState<JobMatch[]>([]);
   const [isGeneratingMatches, setIsGeneratingMatches] = useState(false);
+  const [candidateDetails, setCandidateDetails] = useState<{ [key: string]: CandidateDetails }>({});
 
   const queryClient = useQueryClient();
 
@@ -82,8 +103,38 @@ export default function JobList() {
   // Generate matches mutation
   const generateMatchesMutation = useMutation({
     mutationFn: (jobId: string) => api.post(`/api/jobs/${jobId}/matches`),
-    onSuccess: (data: any) => {
-      setJobMatches(data.data.matches);
+    onSuccess: async (data: any) => {
+      const matches = data.data.matches;
+      setJobMatches(matches);
+      
+      // Fetch candidate details for matches that don't have names
+      const candidatesNeedingDetails = matches.filter(
+        (match: JobMatch) => !match.candidate_name || match.candidate_name.startsWith('Candidate ')
+      );
+      
+      if (candidatesNeedingDetails.length > 0) {
+        const detailsPromises = candidatesNeedingDetails.map(async (match: JobMatch) => {
+          try {
+            const response = await api.get(`/api/resume/${match.candidate_id}`);
+            return { id: match.candidate_id, data: response.data };
+          } catch (error) {
+            console.error(`Failed to fetch details for candidate ${match.candidate_id}`);
+            return null;
+          }
+        });
+        
+        const results = await Promise.all(detailsPromises);
+        const newCandidateDetails: { [key: string]: CandidateDetails } = {};
+        
+        results.forEach(result => {
+          if (result) {
+            newCandidateDetails[result.id] = result.data;
+          }
+        });
+        
+        setCandidateDetails(newCandidateDetails);
+      }
+      
       setIsGeneratingMatches(false);
     },
   });
@@ -92,6 +143,7 @@ export default function JobList() {
     setSelectedJob(job);
     setIsGeneratingMatches(true);
     setShowMatchModal(true);
+    setCandidateDetails({});
     
     try {
       await generateMatchesMutation.mutateAsync(job.id);
@@ -99,6 +151,40 @@ export default function JobList() {
       console.error('Error generating matches:', error);
       setIsGeneratingMatches(false);
     }
+  };
+
+  const getCandidateName = (match: JobMatch): string => {
+    // Use candidate_name from match response if available
+    if (match.candidate_name && !match.candidate_name.startsWith('C') && !match.candidate_name.startsWith('Candidate ')) {
+      return match.candidate_name;
+    }
+    
+    const details = candidateDetails[match.candidate_id];
+    if (details?.parsed_data?.personal_info?.full_name) {
+      return details.parsed_data.personal_info.full_name;
+    }
+    
+    return match.candidate_name || `Candidate ${match.candidate_id.slice(0, 8)}`;
+  };
+
+  const getCandidateInfo = (match: JobMatch) => {
+    const details = candidateDetails[match.candidate_id];
+    const personalInfo = details?.parsed_data?.personal_info || {};
+    const experienceInfo = details?.parsed_data?.experience || {};
+    
+    return {
+      name: getCandidateName(match),
+      email: personalInfo.email || 'N/A',
+      phone: personalInfo.phone || 'N/A',
+      location: personalInfo.location || 'N/A',
+      experienceYears: experienceInfo.total_years || 0,
+      currentRole: experienceInfo.current_position || 'N/A'
+    };
+  };
+
+  const handleViewCandidate = (candidateId: string) => {
+    // Navigate to candidate detail page
+    window.open(`/search?candidate=${candidateId}`, '_blank');
   };
 
   const getStatusColor = (status: string) => {
@@ -292,77 +378,170 @@ export default function JobList() {
       {/* Job Matches Modal */}
       {showMatchModal && selectedJob && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 w-full max-w-6xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">
+              <h2 className="text-2xl font-bold text-gray-900">
                 Candidate Matches for "{selectedJob.title}"
               </h2>
               <button
                 onClick={() => setShowMatchModal(false)}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-gray-400 hover:text-gray-600 text-2xl"
               >
                 ✕
               </button>
             </div>
 
+            {/* Job Summary and Match Statistics */}
+            {!isGeneratingMatches && jobMatches.length > 0 && (
+              <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-600">{jobMatches.length}</div>
+                    <div className="text-sm text-gray-600">Total Candidates</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">
+                      {jobMatches.filter(m => m.compatibility_score >= 70).length}
+                    </div>
+                    <div className="text-sm text-gray-600">High Match (70%+)</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-yellow-600">
+                      {jobMatches.filter(m => m.recommendation === 'excellent_fit' || m.recommendation === 'good_fit').length}
+                    </div>
+                    <div className="text-sm text-gray-600">Recommended</div>
+                  </div>
+                </div>
+                
+                <div className="border-t pt-3">
+                  <p className="text-sm text-gray-700">
+                    <span className="font-medium">Department:</span> {selectedJob.department} | 
+                    <span className="font-medium ml-2">Location:</span> {selectedJob.location} | 
+                    <span className="font-medium ml-2">Salary:</span> {selectedJob.salary_range || 'Not specified'}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {isGeneratingMatches ? (
               <div className="text-center py-12">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
                 <p className="mt-4 text-gray-600">AI is analyzing candidates...</p>
+                <p className="mt-2 text-sm text-gray-500">This may take a few moments</p>
               </div>
             ) : jobMatches.length === 0 ? (
               <div className="text-center py-12">
                 <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-500">No candidate matches found.</p>
+                <p className="text-sm text-gray-400 mt-2">Try adjusting the job requirements or adding more candidates to your database.</p>
               </div>
             ) : (
               <div className="space-y-4">
-                {jobMatches.map((match) => (
-                  <div key={match.candidate_id} className="border rounded-lg p-4">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <span className="font-medium">Candidate ID: {match.candidate_id}</span>
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${
-                            match.compatibility_score >= 80 ? 'bg-green-100 text-green-800' :
-                            match.compatibility_score >= 60 ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-red-100 text-red-800'
-                          }`}>
-                            {match.compatibility_score}% Match
-                          </span>
-                          <span className={`px-2 py-1 rounded text-xs ${
-                            match.recommendation === 'strong_fit' ? 'bg-green-100 text-green-800' :
-                            match.recommendation === 'good_fit' ? 'bg-blue-100 text-blue-800' :
-                            match.recommendation === 'potential_fit' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {match.recommendation.replace('_', ' ')}
-                          </span>
+                {jobMatches.map((match) => {
+                  const candidateInfo = getCandidateInfo(match);
+                  return (
+                    <div key={match.candidate_id} className="border rounded-lg p-6 hover:shadow-md transition-shadow">
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-3">
+                            <h3 className="text-lg font-semibold text-gray-900">
+                              {candidateInfo.name}
+                            </h3>
+                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                              match.compatibility_score >= 80 ? 'bg-green-100 text-green-800' :
+                              match.compatibility_score >= 60 ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {match.compatibility_score}% Match
+                            </span>
+                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                              match.recommendation === 'excellent_fit' ? 'bg-green-100 text-green-800' :
+                              match.recommendation === 'good_fit' ? 'bg-blue-100 text-blue-800' :
+                              match.recommendation === 'potential_fit' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {match.recommendation.replace('_', ' ')}
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3 text-sm text-gray-600">
+                            <div>
+                              <span className="font-medium">Email:</span>
+                              <p className="truncate">{candidateInfo.email}</p>
+                            </div>
+                            <div>
+                              <span className="font-medium">Experience:</span>
+                              <p>{candidateInfo.experienceYears} years</p>
+                            </div>
+                            <div>
+                              <span className="font-medium">Location:</span>
+                              <p className="truncate">{candidateInfo.location}</p>
+                            </div>
+                            <div>
+                              <span className="font-medium">Current Role:</span>
+                              <p className="truncate">{candidateInfo.currentRole}</p>
+                            </div>
+                          </div>
+                          
+                          <p className="text-gray-700 mb-4 bg-gray-50 p-3 rounded-lg">
+                            {match.quick_assessment}
+                          </p>
                         </div>
-                        <p className="text-gray-600 text-sm mb-2">{match.quick_assessment}</p>
+                        
+                        <div className="ml-4 flex flex-col gap-2">
+                          <button
+                            onClick={() => handleViewCandidate(match.candidate_id)}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                          >
+                            View Profile
+                          </button>
+                          <a
+                            href={`mailto:${candidateInfo.email}`}
+                            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm text-center"
+                          >
+                            Contact
+                          </a>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-green-50 p-4 rounded-lg">
+                          <h4 className="font-semibold text-green-800 mb-2 flex items-center">
+                            <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            Key Strengths
+                          </h4>
+                          <ul className="space-y-1">
+                            {match.top_strengths.map((strength, idx) => (
+                              <li key={idx} className="text-sm text-green-700 flex items-start">
+                                <span className="text-green-500 mr-2">•</span>
+                                {strength}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        
+                        <div className="bg-orange-50 p-4 rounded-lg">
+                          <h4 className="font-semibold text-orange-800 mb-2 flex items-center">
+                            <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                            </svg>
+                            Areas of Concern
+                          </h4>
+                          <ul className="space-y-1">
+                            {match.main_concerns.map((concern, idx) => (
+                              <li key={idx} className="text-sm text-orange-700 flex items-start">
+                                <span className="text-orange-500 mr-2">•</span>
+                                {concern}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       </div>
                     </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <h4 className="font-medium text-green-800 mb-1">Strengths:</h4>
-                        <ul className="text-sm text-green-700 list-disc list-inside">
-                          {match.top_strengths.map((strength, idx) => (
-                            <li key={idx}>{strength}</li>
-                          ))}
-                        </ul>
-                      </div>
-                      <div>
-                        <h4 className="font-medium text-red-800 mb-1">Concerns:</h4>
-                        <ul className="text-sm text-red-700 list-disc list-inside">
-                          {match.main_concerns.map((concern, idx) => (
-                            <li key={idx}>{concern}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

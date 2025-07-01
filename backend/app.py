@@ -739,58 +739,50 @@ def analyze_job_posting(job_id):
 
 @app.route('/api/debug/resume/<resume_id>', methods=['GET'])
 def debug_resume_parsing(resume_id):
-    """Debug endpoint to analyze resume parsing issues"""
+    """Debug endpoint to analyze resume parsing and skill extraction"""
     try:
+        # Get resume data
         resume = db.get_resume_by_id(resume_id)
         if not resume:
             return jsonify({"error": "Resume not found"}), 404
         
-        # Get the original file path (if it still exists)
-        filename = resume.get('filename', '')
-        file_path = f"uploads/{resume_id}_{filename}"
+        # Get raw text
+        raw_text = resume.get('raw_text', '')
+        parsed_data = resume.get('parsed_data', {})
         
-        debug_info = {
+        # Debug skill extraction
+        debug_info = _debug_skill_extraction(raw_text)
+        
+        return jsonify({
             "resume_id": resume_id,
-            "filename": filename,
-            "parsing_debug": {}
-        }
-        
-        # Check if file still exists
-        if os.path.exists(file_path):
-            debug_info["file_exists"] = True
-            
-            # Re-extract text to see current extraction
-            if file_path.lower().endswith('.pdf'):
-                raw_text = resume_parser._extract_text_from_pdf(file_path)
-            elif file_path.lower().endswith(('.docx', '.doc')):
-                raw_text = resume_parser._extract_text_from_docx(file_path)
-            else:
-                raw_text = "Unsupported format"
-            
-            debug_info["raw_text_length"] = len(raw_text)
-            debug_info["raw_text_preview"] = raw_text[:500] + "..." if len(raw_text) > 500 else raw_text
-            
-            # Debug skill extraction step by step
-            debug_info["skill_extraction_debug"] = _debug_skill_extraction(raw_text)
-            
-        else:
-            debug_info["file_exists"] = False
-            # Use stored raw text if available
-            stored_text = resume.get('parsed_data', {}).get('raw_text', '')
-            if stored_text:
-                debug_info["raw_text_length"] = len(stored_text)
-                debug_info["raw_text_preview"] = stored_text[:500] + "..." if len(stored_text) > 500 else stored_text
-                debug_info["skill_extraction_debug"] = _debug_skill_extraction(stored_text)
-            else:
-                debug_info["raw_text_preview"] = "No raw text available"
-        
-        # Compare with stored parsed data
-        debug_info["stored_skills"] = resume.get('parsed_data', {}).get('skills', {})
-        
-        return jsonify({"success": True, "debug_info": debug_info})
+            "candidate_name": parsed_data.get('personal_info', {}).get('full_name', 'Unknown'),
+            "raw_text_length": len(raw_text),
+            "parsed_skills": parsed_data.get('skills', {}),
+            "debug_analysis": debug_info,
+            "raw_text_preview": raw_text[:500] + "..." if len(raw_text) > 500 else raw_text
+        })
         
     except Exception as e:
-        logger.error(f"Error debugging resume {resume_id}: {str(e)}")
+        logger.error(f"Error in debug endpoint: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/ai/cost-stats', methods=['GET'])
+def get_ai_cost_stats():
+    """Get AI usage and cost statistics"""
+    try:
+        stats = ai_analyzer.get_cost_stats()
+        return jsonify({
+            "success": True,
+            "ai_usage_stats": stats,
+            "recommendations": [
+                "Use rule-based matching when possible to save costs",
+                "Cache results are automatically used to avoid repeated calls",
+                "Job matches with simple requirements use free rule-based analysis"
+            ]
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting AI cost stats: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 def _debug_skill_extraction(text: str) -> Dict:
@@ -851,6 +843,48 @@ def _debug_skill_extraction(text: str) -> Dict:
     debug_data["total_skills_found"] = len(debug_data["all_found_skills"])
     
     return debug_data
+
+@app.route('/api/debug/candidates', methods=['GET'])
+def debug_candidates():
+    """Debug endpoint to check candidate data structure"""
+    try:
+        candidates = db.get_resumes()
+        debug_info = []
+        
+        for candidate in candidates[:5]:  # Check first 5 candidates
+            personal_info = candidate["parsed_data"].get("personal_info", {})
+            debug_info.append({
+                "candidate_id": candidate["id"][:8],
+                "personal_info_keys": list(personal_info.keys()),
+                "personal_info": personal_info,
+                "has_full_name": "full_name" in personal_info,
+                "has_name": "name" in personal_info,
+                "filename": candidate.get("filename", "unknown")
+            })
+        
+        return jsonify({
+            "success": True,
+            "total_candidates": len(candidates),
+            "sample_data": debug_info
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in debug candidates: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/debug/clear-cache', methods=['POST'])
+def clear_ai_cache():
+    """Clear AI caches to force fresh results"""
+    try:
+        ai_analyzer.clear_job_match_cache()
+        return jsonify({
+            "success": True,
+            "message": "AI caches cleared successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error clearing cache: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001) 

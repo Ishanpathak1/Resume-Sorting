@@ -22,7 +22,30 @@ class AIAnalyzer:
         self._intent_cache = {}
         # NEW: Cache for search responses to avoid repeated AI calls
         self._response_cache = {}
+        # COST OPTIMIZATION: Cache for job matches to avoid repeated expensive calls
+        self._job_match_cache = {}
+        # COST MONITORING: Track AI usage for cost awareness
+        self._ai_calls_count = 0
+        self._tokens_used = 0
         
+    def _log_ai_usage(self, tokens_used: int, model: str, operation: str):
+        """Track AI usage for cost monitoring"""
+        self._ai_calls_count += 1
+        self._tokens_used += tokens_used
+        if self._ai_calls_count % 10 == 0:  # Log every 10 calls
+            logger.info(f"AI Usage: {self._ai_calls_count} calls, ~{self._tokens_used} tokens used. Last: {operation} ({model})")
+    
+    def get_cost_stats(self) -> Dict:
+        """Get current AI usage statistics"""
+        # Rough cost estimates: GPT-3.5-turbo $0.002/1K tokens, GPT-4 $0.03/1K tokens
+        gpt35_cost = (self._tokens_used * 0.002) / 1000
+        return {
+            "total_calls": self._ai_calls_count,
+            "tokens_used": self._tokens_used,
+            "estimated_cost_usd": round(gpt35_cost, 4),
+            "cache_hit_ratio": f"{len(self._analysis_cache)}/{self._ai_calls_count}" if self._ai_calls_count > 0 else "0/0"
+        }
+    
     # NEW: Helper methods for token optimization
     def _is_simple_search_query(self, user_message: str) -> bool:
         """Detect if this is a simple search that doesn't need AI analysis"""
@@ -215,10 +238,13 @@ class AIAnalyzer:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1,
-                max_tokens=1800  # Increased for enhanced fraud detection
+                max_tokens=800  # COST OPTIMIZATION: Reduced from 1800 to 800 (55% cost reduction)
             )
             
             result = response.choices[0].message.content
+            
+            # COST MONITORING: Log AI usage
+            self._log_ai_usage(800, "gpt-3.5-turbo", "comprehensive_analysis")
             
             # Enhanced JSON cleaning and parsing
             cleaned_result = self._clean_and_parse_json(result)
@@ -709,8 +735,10 @@ class AIAnalyzer:
             
             result = response.choices[0].message.content
             
+            # COST MONITORING: Log AI usage
+            self._log_ai_usage(600, "gpt-3.5-turbo", "job_matching")
+            
             # Clean and parse JSON
-            result = result.strip()
             if result.startswith('```json'):
                 result = result[7:]
             if result.endswith('```'):
@@ -723,54 +751,68 @@ class AIAnalyzer:
             return self._fallback_candidate_match(candidate_data, job_requirements)
     
     def generate_bulk_job_matches(self, candidates: List[Dict], job_requirements: Dict) -> List[Dict]:
-        """PHASE 1 & 2 OPTIMIZED: Generate job matches for multiple candidates efficiently"""
+        """COST-OPTIMIZED: Generate job matches efficiently with minimal token usage"""
         try:
-            # Prepare simplified candidate summaries for bulk processing
+            # COST OPTIMIZATION: Limit to top 15 candidates and use minimal data
+            top_candidates = candidates[:15]
+            
+            # COST OPTIMIZATION: Create ultra-minimal candidate summaries
             candidate_summaries = []
-            for candidate in candidates[:20]:  # PHASE 1: Limit to 20 candidates to reduce tokens
+            for candidate in top_candidates:
+                parsed_data = candidate["parsed_data"]
+                personal_info = parsed_data.get("personal_info", {})
+                skills_data = parsed_data.get("skills", {})
+                experience_data = parsed_data.get("experience", {})
+                
+                # Get only top 3 most relevant skills to reduce tokens
+                all_skills = []
+                for category in ["programming_languages", "web_technologies", "frameworks_libraries"]:
+                    category_skills = skills_data.get(category, [])
+                    if isinstance(category_skills, list):
+                        all_skills.extend(category_skills[:2])  # Only top 2 from each category
+                
                 summary = {
                     "id": candidate["id"],
-                    "name": candidate["parsed_data"].get("personal_info", {}).get("full_name", "Unknown"),
-                    "skills": list(candidate["parsed_data"].get("skills", {}).get("programming_languages", []))[:5],  # Limit skills
-                    "experience_years": candidate["parsed_data"].get("experience", {}).get("total_years", 0),
-                    "overall_score": candidate["ranking_score"].get("total_score", 0)
+                    "name": personal_info.get("full_name") or personal_info.get("name") or f"Candidate {candidate['id'][:8]}",
+                    "skills": all_skills[:4],  # Maximum 4 skills to save tokens
+                    "exp": experience_data.get("total_years", 0),
+                    "score": candidate["ranking_score"].get("total_score", 50)
                 }
                 candidate_summaries.append(summary)
             
-            prompt = f"""
-            Rank these candidates for the job. Return ONLY valid JSON array:
+            # COST OPTIMIZATION: Very concise prompt to minimize tokens
+            job_summary = {
+                "title": job_requirements.get("job_analysis", {}).get("role_type", "Developer"),
+                "skills": job_requirements.get("required_skills", {}).get("programming_languages", [])[:3],
+                "exp_min": job_requirements.get("experience_requirements", {}).get("minimum_years", 1)
+            }
             
-            [
-                {{
-                    "candidate_id": "string",
-                    "compatibility_score": 75,
-                    "quick_assessment": "brief assessment",
-                    "top_strengths": ["strength1", "strength2"],
-                    "main_concerns": ["concern1"],
-                    "recommendation": "good_fit"
-                }}
-            ]
-            
-            Job Requirements: {json.dumps(job_requirements, separators=(',', ':'))}
-            Candidates: {json.dumps(candidate_summaries, separators=(',', ':'))}
-            
-            Sort by compatibility score (highest first). Be concise.
-            """
+            prompt = f"""Rate candidates 0-100 for: {job_summary['title']}
+Needs: {', '.join(job_summary['skills'][:3])}, {job_summary['exp_min']}+ yrs
+
+Candidates: {json.dumps(candidate_summaries, separators=(',', ':'))}
+
+Return JSON array with candidate names and details:
+[{{"candidate_id":"id","candidate_name":"Full Name","compatibility_score":75,"quick_assessment":"Brief fit summary","top_strengths":["strength1","strength2"],"main_concerns":["concern1"],"recommendation":"good_fit"}}]
+
+IMPORTANT: Include the candidate_name from the data. Use: excellent_fit, good_fit, potential_fit, poor_fit"""
             
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",  # PHASE 2: Switched from GPT-4 (90% cost reduction)
+                model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a recruiter doing rapid candidate screening. Return valid JSON array only."},
+                    {"role": "system", "content": "Expert recruiter. Return valid JSON only. Be concise but specific."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
-                max_tokens=800  # PHASE 1: Reduced from 2000+ tokens (60% reduction)
+                temperature=0.1,  # Lower temperature for consistency
+                max_tokens=600    # COST OPTIMIZATION: Reduced from 1200 to 600
             )
             
-            result = response.choices[0].message.content
+            result = response.choices[0].message.content.strip()
+            
+            # COST MONITORING: Log AI usage
+            self._log_ai_usage(600, "gpt-3.5-turbo", "job_matching")
             
             # Clean and parse JSON
-            result = result.strip()
             if result.startswith('```json'):
                 result = result[7:]
             if result.endswith('```'):
@@ -778,32 +820,71 @@ class AIAnalyzer:
             
             matches = json.loads(result)
             
-            # Ensure all candidates have matches (fill in missing ones with basic data)
+            # COST OPTIMIZATION: Fast rule-based fallback for missing candidates
             matched_ids = {match["candidate_id"] for match in matches}
             for candidate in candidate_summaries:
                 if candidate["id"] not in matched_ids:
+                    # Quick rule-based assessment to avoid additional AI calls
+                    score = min(90, max(30, candidate["score"]))
+                    
+                    # Simple rule-based strengths
+                    strengths = []
+                    if candidate["exp"] >= 3:
+                        strengths.append(f"{candidate['exp']} years experience")
+                    if len(candidate["skills"]) >= 2:
+                        strengths.append(f"Skills: {', '.join(candidate['skills'][:2])}")
+                    if candidate["score"] > 70:
+                        strengths.append("Strong profile score")
+                    
+                    concerns = []
+                    if candidate["exp"] < 2:
+                        concerns.append("Limited experience")
+                    if not candidate["skills"]:
+                        concerns.append("Skills verification needed")
+                    
                     matches.append({
                         "candidate_id": candidate["id"],
-                        "compatibility_score": 50,
-                        "quick_assessment": "Basic match - needs manual review",
-                        "top_strengths": ["Experience"],
-                        "main_concerns": ["Needs evaluation"],
-                        "recommendation": "potential_fit"
+                        "candidate_name": candidate["name"],  # Include candidate name
+                        "compatibility_score": score,
+                        "quick_assessment": f"{candidate['name']} ({candidate['exp']}y exp) - Quick rule-based match.",
+                        "top_strengths": strengths or ["Profile available"],
+                        "main_concerns": concerns or ["Detailed review needed"],
+                        "recommendation": "good_fit" if score >= 60 else "potential_fit"
                     })
             
             return matches
             
         except Exception as e:
             logger.error(f"Error in bulk job matching: {str(e)}")
-            # Fallback to basic scoring
-            return [{
-                "candidate_id": candidate["id"],
-                "compatibility_score": candidate["ranking_score"].get("total_score", 50),
-                "quick_assessment": "AI analysis failed - manual review required",
-                "top_strengths": ["Resume submitted"],
-                "main_concerns": ["Needs manual evaluation"],
-                "recommendation": "potential_fit"
-            } for candidate in candidates[:20]]
+            # COST OPTIMIZATION: Simple rule-based fallback - no AI calls
+            fallback_matches = []
+            for candidate in candidates[:15]:
+                name = candidate["parsed_data"].get("personal_info", {}).get("full_name", f"Candidate {candidate['id'][:8]}")
+                exp_years = candidate["parsed_data"].get("experience", {}).get("total_years", 0)
+                score = candidate["ranking_score"].get("total_score", 50)
+                
+                # Rule-based assessment
+                if score >= 75:
+                    recommendation = "good_fit"
+                    assessment = f"{name} has strong profile metrics."
+                elif score >= 60:
+                    recommendation = "potential_fit"
+                    assessment = f"{name} shows moderate fit potential."
+                else:
+                    recommendation = "potential_fit"
+                    assessment = f"{name} requires detailed review."
+                
+                fallback_matches.append({
+                    "candidate_id": candidate["id"],
+                    "candidate_name": name,  # Include candidate name
+                    "compatibility_score": min(85, score),
+                    "quick_assessment": f"{assessment} {exp_years} years experience.",
+                    "top_strengths": [f"{exp_years} years experience", "Profile submitted"],
+                    "main_concerns": ["Manual review recommended"],
+                    "recommendation": recommendation
+                })
+            
+            return fallback_matches
     
     def suggest_job_improvements(self, job_description: str, market_analysis: Dict = None) -> Dict:
         """Suggest improvements to job descriptions to attract better candidates"""
@@ -2662,3 +2743,97 @@ Just ask me naturally, like you're talking to a colleague!"""
         except Exception as e:
             logger.error(f"Error in hybrid skill scoring: {str(e)}")
             return enhanced_score  # Fallback to enhanced algorithm
+
+    # COST OPTIMIZATION: Quick rule-based job matching for simple cases
+    def _can_use_rule_based_matching(self, job_requirements: Dict) -> bool:
+        """Determine if we can use rule-based matching instead of AI for cost savings"""
+        try:
+            # If job requirements are minimal or missing, use rule-based
+            required_skills = job_requirements.get("required_skills", {})
+            prog_languages = required_skills.get("programming_languages", [])
+            
+            # Use AI only if we have specific skill requirements
+            return len(prog_languages) <= 2 or not any(required_skills.values())
+        except:
+            return True  # Use rule-based if there's any issue
+    
+    def _generate_rule_based_matches(self, candidates: List[Dict], job_requirements: Dict) -> List[Dict]:
+        """Fast rule-based matching without AI calls - zero cost"""
+        matches = []
+        
+        # Get job requirements for scoring
+        required_skills = job_requirements.get("required_skills", {}).get("programming_languages", [])
+        min_experience = job_requirements.get("experience_requirements", {}).get("minimum_years", 1)
+        
+        for candidate in candidates[:15]:  # Limit to 15 for speed
+            parsed_data = candidate["parsed_data"]
+            personal_info = parsed_data.get("personal_info", {})
+            experience_data = parsed_data.get("experience", {})
+            skills_data = parsed_data.get("skills", {})
+            
+            name = personal_info.get("full_name", f"Candidate {candidate['id'][:8]}")
+            exp_years = experience_data.get("total_years", 0)
+            base_score = candidate["ranking_score"].get("total_score", 50)
+            
+            # Rule-based skill matching
+            candidate_skills = []
+            for category in ["programming_languages", "web_technologies", "frameworks_libraries"]:
+                cat_skills = skills_data.get(category, [])
+                if isinstance(cat_skills, list):
+                    candidate_skills.extend(cat_skills)
+            
+            # Calculate compatibility score based on rules
+            skill_matches = sum(1 for skill in required_skills if any(skill.lower() in cs.lower() for cs in candidate_skills))
+            experience_match = min(100, (exp_years / max(1, min_experience)) * 100)
+            
+            compatibility_score = min(95, int((base_score * 0.4) + (skill_matches * 15) + (experience_match * 0.3)))
+            
+            # Determine recommendation
+            if compatibility_score >= 75:
+                recommendation = "good_fit"
+            elif compatibility_score >= 60:
+                recommendation = "potential_fit"
+            else:
+                recommendation = "potential_fit"
+            
+            # Generate strengths and concerns
+            strengths = []
+            concerns = []
+            
+            if exp_years >= min_experience:
+                strengths.append(f"{exp_years} years experience (meets requirement)")
+            else:
+                concerns.append(f"Only {exp_years} years experience (needs {min_experience})")
+            
+            if skill_matches > 0:
+                matched_skills = [skill for skill in required_skills if any(skill.lower() in cs.lower() for cs in candidate_skills)]
+                strengths.append(f"Has required skills: {', '.join(matched_skills[:2])}")
+            else:
+                concerns.append("Skill match needs verification")
+            
+            if base_score > 70:
+                strengths.append("Strong overall profile")
+            
+            if not strengths:
+                strengths = ["Profile available for review"]
+            if not concerns:
+                concerns = ["Standard evaluation recommended"]
+            
+            matches.append({
+                "candidate_id": candidate["id"],
+                "candidate_name": name,  # Include candidate name
+                "compatibility_score": compatibility_score,
+                "quick_assessment": f"{name} - Rule-based analysis. {exp_years} years experience, {skill_matches} skill matches.",
+                "top_strengths": strengths[:3],  # Limit to 3
+                "main_concerns": concerns[:2],   # Limit to 2
+                "recommendation": recommendation
+            })
+        
+        # Sort by compatibility score
+        matches.sort(key=lambda x: x["compatibility_score"], reverse=True)
+        return matches
+
+    def clear_job_match_cache(self):
+        """Clear job match cache to force fresh results"""
+        self._job_match_cache.clear()
+        logger.info("Job match cache cleared")
