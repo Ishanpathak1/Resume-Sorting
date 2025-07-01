@@ -105,6 +105,72 @@ export function ResumeList({ filters }: ResumeListProps) {
     return 'score-poor'
   }
 
+  // NEW: Function to get row styling based on fraud detection
+  const getRowClass = (resume: any) => {
+    const fraudAnalysis = resume.fraud_analysis
+    const riskLevel = fraudAnalysis?.risk_level || 'low'
+    
+    // Base class
+    let baseClass = 'hover:bg-gray-50 transition-colors'
+    
+    // Add fraud-specific styling
+    if (riskLevel === 'high') {
+      baseClass += ' bg-red-50 border-l-4 border-red-500'
+    } else if (riskLevel === 'medium') {
+      baseClass += ' bg-yellow-50 border-l-4 border-yellow-500'
+    }
+    
+    // Special highlighting for hidden text fraud
+    const detectedIssues = fraudAnalysis?.detected_issues || []
+    const hasHiddenText = detectedIssues.some((issue: string) => 
+      issue.toLowerCase().includes('white') || 
+      issue.toLowerCase().includes('hidden') ||
+      issue.toLowerCase().includes('tiny text') ||
+      issue.toLowerCase().includes('invisible')
+    )
+    
+    if (hasHiddenText) {
+      baseClass += ' ring-2 ring-red-300 bg-red-100'
+    }
+    
+    return baseClass
+  }
+
+  // NEW: Function to get fraud indicators for display
+  const getFraudIndicators = (resume: any) => {
+    const fraudAnalysis = resume.fraud_analysis
+    const detectedIssues = fraudAnalysis?.detected_issues || []
+    const indicators = []
+    
+    // Check for specific fraud types
+    const hasHiddenText = detectedIssues.some((issue: string) => 
+      issue.toLowerCase().includes('white') || 
+      issue.toLowerCase().includes('hidden') ||
+      issue.toLowerCase().includes('tiny text') ||
+      issue.toLowerCase().includes('invisible')
+    )
+    
+    const hasKeywordStuffing = detectedIssues.some((issue: string) => 
+      issue.toLowerCase().includes('keyword') || issue.toLowerCase().includes('stuffing')
+    )
+    
+    const hasSuspiciousFormatting = detectedIssues.some((issue: string) => 
+      issue.toLowerCase().includes('formatting') || issue.toLowerCase().includes('font')
+    )
+    
+    if (hasHiddenText) {
+      indicators.push({ type: 'hidden_text', label: 'Hidden Text', color: 'red' })
+    }
+    if (hasKeywordStuffing) {
+      indicators.push({ type: 'keyword_stuffing', label: 'Keyword Stuffing', color: 'orange' })
+    }
+    if (hasSuspiciousFormatting) {
+      indicators.push({ type: 'formatting', label: 'Suspicious Format', color: 'yellow' })
+    }
+    
+    return indicators
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -186,8 +252,8 @@ export function ResumeList({ filters }: ResumeListProps) {
                       <ArrowUpDown className="w-4 h-4" />
                     </div>
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">
-                    Fraud Risk
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">
+                    Fraud Risk & Issues
                   </th>
                   <th 
                     className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 min-w-[100px]"
@@ -198,80 +264,119 @@ export function ResumeList({ filters }: ResumeListProps) {
                       <ArrowUpDown className="w-4 h-4" />
                     </div>
                   </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {sortedResumes.map((resume) => (
-                  <tr key={resume.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">
-                          {resume.parsed_data?.personal_info?.full_name || 'Unknown'}
+                {sortedResumes.map((resume) => {
+                  const personalInfo = resume.parsed_data?.personal_info || {}
+                  const contactInfo = resume.parsed_data?.contact_info || {}
+                  const experience = resume.parsed_data?.experience || {}
+                  const fraudIndicators = getFraudIndicators(resume)
+                  
+                  return (
+                    <tr key={resume.id} className={getRowClass(resume)}>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0">
+                            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-medium text-sm">
+                              {(personalInfo.full_name || resume.filename).charAt(0).toUpperCase()}
+                            </div>
+                          </div>
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900">
+                              {personalInfo.full_name || 'Unknown Name'}
+                            </div>
+                            <div className="text-xs text-gray-500 truncate max-w-[140px]">
+                              {resume.filename}
+                            </div>
+                            {/* NEW: Fraud indicator badges */}
+                            {fraudIndicators.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {fraudIndicators.map((indicator, idx) => (
+                                  <span 
+                                    key={idx}
+                                    className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
+                                      indicator.color === 'red' ? 'bg-red-100 text-red-800 border border-red-200' :
+                                      indicator.color === 'orange' ? 'bg-orange-100 text-orange-800 border border-orange-200' :
+                                      'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                                    }`}
+                                    title={`Fraud detected: ${indicator.label}`}
+                                  >
+                                    🚨 {indicator.label}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-sm text-gray-500 truncate max-w-[150px]">{resume.filename}</div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 truncate max-w-[140px]">
-                        {resume.parsed_data?.contact_info?.email || 'N/A'}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {resume.parsed_data?.contact_info?.phone || 'N/A'}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
-                        {resume.parsed_data?.experience?.total_years || 
-                         resume.parsed_data?.experience?.years_experience || 
-                         resume.parsed_data?.ai_parsing?.experience?.total_years ||
-                         resume.parsed_data?.traditional_parsing?.experience?.years_experience || 0} years
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {resume.parsed_data?.skills?.skills_count || 
-                         Object.values(resume.parsed_data?.skills || {}).flat().length ||
-                         resume.parsed_data?.skills?.all_skills?.length || 0} skills
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div className={`text-lg font-semibold ${getScoreClass(resume.ranking_score?.total_score || 0)}`}>
-                        {resume.ranking_score?.total_score || 0}/100
-                      </div>
-                      <div className="text-xs text-gray-500 truncate max-w-[80px]">
-                        {resume.ranking_score?.recommendation || 'No recommendation'}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <span className={getRiskBadgeClass(resume.fraud_analysis?.risk_level || 'unknown')}>
-                        {resume.fraud_analysis?.risk_level?.toUpperCase() || 'UNKNOWN'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(resume.upload_date).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex items-center justify-end space-x-3">
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="text-sm text-gray-900">
+                          {contactInfo.email && (
+                            <div className="truncate max-w-[150px]">{contactInfo.email}</div>
+                          )}
+                          {contactInfo.phone && (
+                            <div className="text-xs text-gray-500">{contactInfo.phone}</div>
+                          )}
+                          {!contactInfo.email && !contactInfo.phone && (
+                            <span className="text-xs text-gray-400">No contact info</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="text-sm text-gray-900">
+                          {experience.total_years || experience.years_experience || 0} years
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {experience.current_position || 'N/A'}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getScoreClass(resume.ranking_score?.total_score || 0)}`}>
+                            {Math.round(resume.ranking_score?.total_score || 0)}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex flex-col space-y-1">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(resume.fraud_analysis?.risk_level)}`}>
+                            {(resume.fraud_analysis?.risk_level || 'unknown').toUpperCase()}
+                          </span>
+                          {/* NEW: Show detected fraud issues */}
+                          {resume.fraud_analysis?.detected_issues?.length > 0 && (
+                            <div className="text-xs text-red-600">
+                              {resume.fraud_analysis.detected_issues.length} issue{resume.fraud_analysis.detected_issues.length > 1 ? 's' : ''} detected
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 text-sm text-gray-500">
+                        {new Date(resume.upload_date).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-4 text-sm font-medium space-x-2">
                         <button
                           onClick={() => setSelectedResume(resume.id)}
-                          className="text-primary-600 hover:text-primary-900 p-1"
+                          className="text-blue-600 hover:text-blue-900 transition-colors"
                           title="View Details"
                         >
-                          <Eye className="w-5 h-5" />
+                          <Eye className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => deleteMutation.mutate(resume.id)}
                           disabled={deleteMutation.isPending}
-                          className="text-red-600 hover:text-red-900 p-1"
+                          className="text-red-600 hover:text-red-900 transition-colors"
                           title="Delete Resume"
                         >
-                          <Trash2 className="w-5 h-5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

@@ -1,8 +1,9 @@
 'use client'
 
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, AlertTriangle, CheckCircle, User, Mail, Phone, Calendar, Award, Trash2, HelpCircle } from 'lucide-react'
-import { getResumeById, deleteResume } from '../lib/api'
+import { X, AlertTriangle, CheckCircle, User, Mail, Phone, Calendar, Award, Trash2, HelpCircle, Bug } from 'lucide-react'
+import { getResumeById, deleteResume, debugResumeSkills } from '../lib/api'
 
 interface ResumeDetailProps {
   resumeId: string
@@ -11,6 +12,9 @@ interface ResumeDetailProps {
 
 export function ResumeDetail({ resumeId, onClose }: ResumeDetailProps) {
   const queryClient = useQueryClient()
+  const [activeTab, setActiveTab] = useState<'overview' | 'analysis' | 'fraud'>('overview')
+  const [showDebugModal, setShowDebugModal] = useState(false)
+  const [debugData, setDebugData] = useState<any>(null)
   
   const { data: resumeData, isLoading, error } = useQuery({
     queryKey: ['resume', resumeId],
@@ -50,6 +54,22 @@ export function ResumeDetail({ resumeId, onClose }: ResumeDetailProps) {
     return 'score-poor'
   }
 
+  // Debug function to analyze skill extraction
+  const debugSkillExtraction = async () => {
+    try {
+      const result = await debugResumeSkills(resumeId)
+      
+      if (result.success) {
+        setDebugData(result.debug_info)
+        setShowDebugModal(true)
+      } else {
+        console.error('Debug failed:', result.error)
+      }
+    } catch (error) {
+      console.error('Debug request failed:', error)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -81,20 +101,27 @@ export function ResumeDetail({ resumeId, onClose }: ResumeDetailProps) {
       <div className="bg-white rounded-lg max-w-4xl w-full max-h-full overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              {resume.parsed_data?.personal_info?.full_name || 'Resume Details'}
-            </h2>
-            <div className="flex items-center space-x-2 mt-1">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-medium text-lg">
+              {(resume.parsed_data?.personal_info?.full_name || resume.filename).charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">
+                {resume.parsed_data?.personal_info?.full_name || 'Unknown Candidate'}
+              </h2>
               <p className="text-sm text-gray-500">{resume.filename}</p>
-              {resume.analysis_method === 'ai_enhanced' && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                  AI Enhanced
-                </span>
-              )}
             </div>
           </div>
           <div className="flex items-center space-x-2">
+            {/* NEW: Debug Button */}
+            <button
+              onClick={debugSkillExtraction}
+              className="inline-flex items-center px-3 py-2 border border-orange-300 rounded-md shadow-sm text-sm font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 transition-colors"
+              title="Debug skill extraction issues"
+            >
+              <Bug className="w-4 h-4 mr-2" />
+              Debug Skills
+            </button>
             <button
               onClick={handleDelete}
               className="text-gray-400 hover:text-gray-600"
@@ -785,6 +812,126 @@ export function ResumeDetail({ resumeId, onClose }: ResumeDetailProps) {
           )}
         </div>
       </div>
+
+      {/* NEW: Debug Modal */}
+      {showDebugModal && debugData && (
+        <>
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50" onClick={() => setShowDebugModal(false)} />
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex items-center justify-center min-h-full p-4">
+              <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+                <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    🐛 Skill Extraction Debug: {debugData.filename}
+                  </h3>
+                  <button
+                    onClick={() => setShowDebugModal(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                
+                <div className="p-6 overflow-y-auto max-h-[70vh]">
+                  <div className="space-y-6">
+                    {/* File Status */}
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900 mb-2">File Information</h4>
+                      <div className="text-sm space-y-1">
+                        <p><span className="font-medium">File exists:</span> {debugData.file_exists ? '✅ Yes' : '❌ No'}</p>
+                        <p><span className="font-medium">Raw text length:</span> {debugData.raw_text_length || 0} characters</p>
+                      </div>
+                    </div>
+
+                    {/* Raw Text Preview */}
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900 mb-2">Raw Text Preview</h4>
+                      <div className="text-sm bg-white p-3 rounded border max-h-32 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap text-xs">
+                          {debugData.raw_text_preview || 'No text available'}
+                        </pre>
+                      </div>
+                    </div>
+
+                    {/* Skills Found */}
+                    <div className="bg-green-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900 mb-2">
+                        Skills Found ({debugData.skill_extraction_debug?.total_skills_found || 0})
+                      </h4>
+                      {debugData.skill_extraction_debug?.all_found_skills?.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {debugData.skill_extraction_debug.all_found_skills.map((skill: string, index: number) => (
+                            <span key={index} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-600">No skills detected by traditional parser</p>
+                      )}
+                    </div>
+
+                    {/* Stored Skills Comparison */}
+                    <div className="bg-purple-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900 mb-2">Stored Skills (AI + Traditional)</h4>
+                      {debugData.stored_skills?.all_skills?.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {debugData.stored_skills.all_skills.map((skill: string, index: number) => (
+                            <span key={index} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-600">No stored skills found</p>
+                      )}
+                    </div>
+
+                    {/* Detailed Skill Analysis by Category */}
+                    <div className="bg-yellow-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900 mb-2">Detailed Analysis by Category</h4>
+                      <div className="space-y-3">
+                        {Object.entries(debugData.skill_extraction_debug?.skill_matches || {}).map(([category, skills]: [string, any]) => (
+                          <div key={category} className="bg-white p-3 rounded border">
+                            <h5 className="font-medium text-sm capitalize mb-2">{category.replace('_', ' ')}</h5>
+                            <div className="flex flex-wrap gap-1">
+                              {skills.map((skill: string, index: number) => (
+                                <span key={index} className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                  {skill}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Debugging Tips */}
+                    <div className="bg-orange-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900 mb-2">🔍 Debugging Tips</h4>
+                      <div className="text-sm space-y-2">
+                        <p><strong>If skills are missing:</strong></p>
+                        <ul className="list-disc list-inside space-y-1 text-gray-600">
+                          <li>Check if skills are written differently in the resume (e.g., "Node.js" vs "NodeJS")</li>
+                          <li>Verify the raw text was extracted properly from the PDF/DOCX</li>
+                          <li>Look for formatting issues or special characters around skill names</li>
+                          <li>Some skills might be detected by AI but not traditional parsing</li>
+                        </ul>
+                        <p><strong>Solutions:</strong></p>
+                        <ul className="list-disc list-inside space-y-1 text-gray-600">
+                          <li>Re-upload the resume with better formatting</li>
+                          <li>Use a different file format (PDF vs DOCX)</li>
+                          <li>Manually check the AI-detected skills in the "AI Insights" section</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 } 

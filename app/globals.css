@@ -200,4 +200,68 @@ textarea:focus {
   .score-poor {
     @apply text-red-600 font-semibold;
   }
+  
+  /* NEW: Fraud highlighting styles */
+  .fraud-row-high {
+    @apply bg-red-50 border-l-4 border-red-500;
+    animation: pulse-red 2s ease-in-out infinite;
+  }
+  
+  .fraud-row-medium {
+    @apply bg-yellow-50 border-l-4 border-yellow-500;
+  }
+  
+  .fraud-row-hidden-text {
+    @apply ring-2 ring-red-300 bg-red-100;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
+  }
+  
+  .fraud-indicator-hidden-text {
+    @apply bg-red-600 text-white px-1.5 py-0.5 rounded text-xs font-bold;
+    animation: blink 1.5s ease-in-out infinite;
+  }
+  
+  .fraud-indicator-keyword-stuffing {
+    @apply bg-orange-600 text-white px-1.5 py-0.5 rounded text-xs font-bold;
+  }
+  
+  .fraud-indicator-formatting {
+    @apply bg-yellow-600 text-white px-1.5 py-0.5 rounded text-xs font-bold;
+  }
+  
+  /* Animations for fraud detection */
+  @keyframes pulse-red {
+    0%, 100% {
+      background-color: rgb(254 242 242);
+    }
+    50% {
+      background-color: rgb(252 165 165);
+    }
+  }
+  
+  @keyframes blink {
+    0%, 50% {
+      opacity: 1;
+    }
+    25%, 75% {
+      opacity: 0.7;
+    }
+  }
+  
+  /* Fraud warning overlay */
+  .fraud-warning {
+    @apply absolute top-0 right-0 bg-red-600 text-white text-xs px-2 py-1 rounded-bl-md font-bold;
+    z-index: 10;
+  }
+  
+  /* Tooltip for fraud indicators */
+  .fraud-tooltip {
+    @apply absolute z-50 px-2 py-1 text-xs font-medium text-white bg-gray-900 rounded-md shadow-lg;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  
+  .fraud-indicator:hover .fraud-tooltip {
+    opacity: 1;
+  }
 } 

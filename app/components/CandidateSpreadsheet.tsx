@@ -115,6 +115,30 @@ export function CandidateSpreadsheet() {
       const skills = resume.parsed_data?.skills || {}
       const projects = resume.parsed_data?.projects || []
       
+      // FIXED: Collect ALL skills from ALL categories
+      const getAllSkills = () => {
+        const allSkills: string[] = []
+        
+        // Add skills from all categories
+        if (skills.programming_languages) allSkills.push(...skills.programming_languages)
+        if (skills.web_technologies) allSkills.push(...skills.web_technologies)
+        if (skills.databases) allSkills.push(...skills.databases)
+        if (skills.cloud_platforms) allSkills.push(...skills.cloud_platforms)
+        if (skills.data_science) allSkills.push(...skills.data_science)
+        if (skills.soft_skills) allSkills.push(...skills.soft_skills)
+        if (skills.frameworks_libraries) allSkills.push(...skills.frameworks_libraries)
+        if (skills.tools_technologies) allSkills.push(...skills.tools_technologies)
+        if (skills.technical_skills) allSkills.push(...skills.technical_skills)
+        
+        // Also include the pre-aggregated all_skills if available
+        if (skills.all_skills) allSkills.push(...skills.all_skills)
+        
+        // Remove duplicates and return
+        return Array.from(new Set(allSkills.filter(skill => skill && typeof skill === 'string')))
+      }
+      
+      const allSkills = getAllSkills()
+      
       return {
         id: resume.id,
         name: personalInfo.full_name || 'Unknown',
@@ -123,7 +147,7 @@ export function CandidateSpreadsheet() {
         location: contactInfo.location || personalInfo.location || 'N/A',
         experience_years: experience.total_years || experience.years_experience || 0,
         education: education.highest_degree || education.degree || 'N/A',
-        skills: skills.all_skills || skills.technical_skills || [],
+        skills: allSkills, // NOW includes ALL skill categories
         programming_languages: skills.programming_languages || [],
         certifications: skills.certifications || [],
         projects_count: Array.isArray(projects) ? projects.length : 0,
@@ -150,6 +174,19 @@ export function CandidateSpreadsheet() {
       candidate.certifications.forEach(cert => certifications.add(cert))
       if (candidate.education !== 'N/A') education.add(candidate.education)
       riskLevels.add(candidate.fraud_risk)
+      
+      // ENHANCED: Also add web technologies and frameworks to languages dropdown
+      const rawSkills = candidate.parsed_data?.skills || {}
+      if (rawSkills.web_technologies) {
+        rawSkills.web_technologies.forEach((tech: any) => {
+          if (typeof tech === 'string') languages.add(tech)
+        })
+      }
+      if (rawSkills.frameworks_libraries) {
+        rawSkills.frameworks_libraries.forEach((framework: any) => {
+          if (typeof framework === 'string') languages.add(framework)
+        })
+      }
     })
 
     return {
@@ -236,6 +273,20 @@ export function CandidateSpreadsheet() {
       )
     }
 
+    // DEBUGGING: Log skills for each candidate when filtering by skills
+    if (filters.skills.length > 0) {
+      console.log('🔍 SKILL FILTER DEBUG:', {
+        filteringFor: filters.skills,
+        candidates: candidateData.map(c => ({
+          name: c.name,
+          allSkills: c.skills,
+          programmingLanguages: c.programming_languages,
+          rawSkillsCategories: Object.keys(c.parsed_data?.skills || {}),
+          skillsInEachCategory: c.parsed_data?.skills
+        }))
+      })
+    }
+
     // Apply filters
     filtered = filtered.filter(candidate => {
       if (filters.name && !candidate.name.toLowerCase().includes(filters.name.toLowerCase())) return false
@@ -246,18 +297,101 @@ export function CandidateSpreadsheet() {
       if (filters.score_max < candidate.total_score) return false
       
       if (filters.skills.length > 0) {
-        const hasSkill = filters.skills.some(skill =>
-          candidate.skills.some(candidateSkill => candidateSkill.toLowerCase().includes(skill.toLowerCase())) ||
-          candidate.programming_languages.some(lang => lang.toLowerCase().includes(skill.toLowerCase()))
-        )
+        const hasSkill = filters.skills.some(skill => {
+          const skillLower = skill.toLowerCase()
+          
+          // Check in the transformed skills array
+          const inSkills = candidate.skills.some(candidateSkill => 
+            candidateSkill.toLowerCase().includes(skillLower)
+          )
+          
+          // Check in programming languages
+          const inProgrammingLanguages = candidate.programming_languages.some(lang => 
+            lang.toLowerCase().includes(skillLower)
+          )
+          
+          // ENHANCED: Also check directly in the raw parsed data for any missed skills
+          const rawSkills = candidate.parsed_data?.skills || {}
+          const inRawData = Object.values(rawSkills).some(skillCategory => {
+            if (Array.isArray(skillCategory)) {
+              return skillCategory.some(rawSkill => 
+                typeof rawSkill === 'string' && rawSkill.toLowerCase().includes(skillLower)
+              )
+            }
+            return false
+          })
+          
+          // ENHANCED: Also check in the raw text for skills that might be missed by parsers
+          const rawText = candidate.parsed_data?.raw_text || ''
+          const inRawText = rawText.toLowerCase().includes(skillLower)
+          
+          // DEBUG LOG for this candidate
+          const found = inSkills || inProgrammingLanguages || inRawData || inRawText
+          if (filters.skills.includes('HTML') || filters.skills.includes('html')) {
+            console.log(`🔍 ${candidate.name} - HTML check:`, {
+              skill: skillLower,
+              inSkills,
+              inProgrammingLanguages,
+              inRawData,
+              inRawText,
+              found,
+              candidateSkills: candidate.skills,
+              rawSkillsData: rawSkills
+            })
+          }
+          
+          return found
+        })
         if (!hasSkill) return false
       }
 
       if (filters.education.length > 0 && !filters.education.includes(candidate.education)) return false
       if (filters.languages.length > 0) {
-        const hasLanguage = filters.languages.some(lang =>
-          candidate.programming_languages.some(candidateLang => candidateLang.toLowerCase().includes(lang.toLowerCase()))
-        )
+        const hasLanguage = filters.languages.some(lang => {
+          const langLower = lang.toLowerCase()
+          
+          // Check in programming languages
+          const inProgrammingLanguages = candidate.programming_languages.some(candidateLang => 
+            candidateLang.toLowerCase().includes(langLower)
+          )
+          
+          // ENHANCED: Also check web technologies (HTML, CSS, etc.)
+          const rawSkills = candidate.parsed_data?.skills || {}
+          const webTechnologies = rawSkills.web_technologies || []
+          const inWebTechnologies = webTechnologies.some((tech: any) => 
+            typeof tech === 'string' && tech.toLowerCase().includes(langLower)
+          )
+          
+          // ENHANCED: Also check frameworks/libraries 
+          const frameworksLibraries = rawSkills.frameworks_libraries || []
+          const inFrameworks = frameworksLibraries.some((framework: any) => 
+            typeof framework === 'string' && framework.toLowerCase().includes(langLower)
+          )
+          
+          // ENHANCED: Also check all skills array for broader matching
+          const inAllSkills = candidate.skills.some(skill => 
+            skill.toLowerCase().includes(langLower)
+          )
+          
+          // DEBUG LOG for languages filter
+          const found = inProgrammingLanguages || inWebTechnologies || inFrameworks || inAllSkills
+          if (langLower === 'html' || langLower === 'css' || langLower === 'javascript') {
+            console.log(`🔍 ${candidate.name} - Language "${lang}" check:`, {
+              language: langLower,
+              inProgrammingLanguages,
+              inWebTechnologies,
+              inFrameworks,
+              inAllSkills,
+              found,
+              programmingLanguages: candidate.programming_languages,
+              webTechnologies: webTechnologies,
+              frameworks: frameworksLibraries,
+              allSkills: candidate.skills
+            })
+          }
+          
+          return found
+        })
         if (!hasLanguage) return false
       }
       if (filters.certifications.length > 0) {
@@ -344,18 +478,84 @@ export function CandidateSpreadsheet() {
 
   const getRiskBadgeClass = (riskLevel: string) => {
     switch (riskLevel) {
-      case 'high': return 'bg-red-100 text-red-800'
-      case 'medium': return 'bg-yellow-100 text-yellow-800'
-      case 'low': return 'bg-green-100 text-green-800'
-      default: return 'bg-gray-100 text-gray-800'
+      case 'high': return 'bg-red-100 text-red-800 border border-red-200'
+      case 'medium': return 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+      case 'low': return 'bg-green-100 text-green-800 border border-green-200'
+      default: return 'bg-gray-100 text-gray-800 border border-gray-200'
     }
   }
 
   const getScoreClass = (score: number) => {
     if (score >= 80) return 'text-green-600 font-semibold'
-    if (score >= 60) return 'text-blue-600 font-semibold'
-    if (score >= 40) return 'text-yellow-600 font-semibold'
-    return 'text-red-600 font-semibold'
+    if (score >= 60) return 'text-blue-600 font-medium'
+    if (score >= 40) return 'text-yellow-600 font-medium'
+    return 'text-red-600 font-medium'
+  }
+
+  // NEW: Function to get row styling based on fraud detection
+  const getRowClass = (candidate: CandidateData, resume: any) => {
+    const fraudAnalysis = resume?.fraud_analysis
+    const riskLevel = fraudAnalysis?.risk_level || 'low'
+    
+    // Base class
+    let baseClass = 'hover:bg-gray-50 transition-colors border-b border-gray-100'
+    
+    // Add fraud-specific styling
+    if (riskLevel === 'high') {
+      baseClass += ' bg-red-50 border-l-4 border-red-500'
+    } else if (riskLevel === 'medium') {
+      baseClass += ' bg-yellow-50 border-l-4 border-yellow-500'
+    }
+    
+    // Special highlighting for hidden text fraud
+    const detectedIssues = fraudAnalysis?.detected_issues || []
+    const hasHiddenText = detectedIssues.some((issue: string) => 
+      issue.toLowerCase().includes('white') || 
+      issue.toLowerCase().includes('hidden') ||
+      issue.toLowerCase().includes('tiny text') ||
+      issue.toLowerCase().includes('invisible')
+    )
+    
+    if (hasHiddenText) {
+      baseClass += ' ring-2 ring-red-300 bg-red-100'
+    }
+    
+    return baseClass
+  }
+
+  // NEW: Function to get fraud indicators for display
+  const getFraudIndicators = (resume: any) => {
+    const fraudAnalysis = resume?.fraud_analysis
+    const detectedIssues = fraudAnalysis?.detected_issues || []
+    const indicators = []
+    
+    // Check for specific fraud types
+    const hasHiddenText = detectedIssues.some((issue: string) => 
+      issue.toLowerCase().includes('white') || 
+      issue.toLowerCase().includes('hidden') ||
+      issue.toLowerCase().includes('tiny text') ||
+      issue.toLowerCase().includes('invisible')
+    )
+    
+    const hasKeywordStuffing = detectedIssues.some((issue: string) => 
+      issue.toLowerCase().includes('keyword') || issue.toLowerCase().includes('stuffing')
+    )
+    
+    const hasSuspiciousFormatting = detectedIssues.some((issue: string) => 
+      issue.toLowerCase().includes('formatting') || issue.toLowerCase().includes('font')
+    )
+    
+    if (hasHiddenText) {
+      indicators.push({ type: 'hidden_text', label: 'HT', title: 'Hidden Text Detected', color: 'red' })
+    }
+    if (hasKeywordStuffing) {
+      indicators.push({ type: 'keyword_stuffing', label: 'KS', title: 'Keyword Stuffing Detected', color: 'orange' })
+    }
+    if (hasSuspiciousFormatting) {
+      indicators.push({ type: 'formatting', label: 'SF', title: 'Suspicious Formatting Detected', color: 'yellow' })
+    }
+    
+    return indicators
   }
 
   const exportToCSV = () => {
@@ -812,144 +1012,162 @@ export function CandidateSpreadsheet() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredData.map((candidate, index) => (
-                <tr key={candidate.id} className="hover:bg-gray-50">
-                  {visibleColumns.has('name') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {filters.rankingMode === 'smart' ? (
-                        <div className="flex items-center space-x-3">
+              {filteredData.map((candidate, index) => {
+                const resume = resumesData?.data?.find((r: any) => r.id === candidate.id)
+                const fraudIndicators = getFraudIndicators(resume)
+                
+                return (
+                  <tr key={candidate.id} className={getRowClass(candidate, resume)}>
+                    {visibleColumns.has('name') && (
+                      <td className="px-4 py-3 sticky left-0 bg-white z-10 border-r border-gray-200">
+                        <div className="flex items-center">
                           <div className="flex-shrink-0">
-                            <span className={`inline-flex items-center justify-center h-6 w-6 rounded-full text-xs font-medium ${
-                              index === 0 ? 'bg-yellow-100 text-yellow-800' :
-                              index === 1 ? 'bg-gray-100 text-gray-800' :
-                              index === 2 ? 'bg-orange-100 text-orange-800' :
-                              'bg-blue-100 text-blue-800'
-                            }`}>
-                              {index + 1}
-                            </span>
+                            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-medium text-xs">
+                              {candidate.name.charAt(0).toUpperCase()}
+                            </div>
                           </div>
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{candidate.name}</div>
-                            <div className="text-xs text-gray-500 truncate max-w-[150px]">{candidate.filename}</div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{candidate.name}</div>
-                          <div className="text-xs text-gray-500 truncate max-w-[180px]">{candidate.filename}</div>
-                        </div>
-                      )}
-                    </td>
-                  )}
-                  
-                  {/* Rest of the columns remain the same */}
-                  {visibleColumns.has('email') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 truncate max-w-[200px]">{candidate.email}</div>
-                    </td>
-                  )}
-                  {visibleColumns.has('phone') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{candidate.phone}</div>
-                    </td>
-                  )}
-                  {visibleColumns.has('location') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 truncate max-w-[130px]">{candidate.location}</div>
-                    </td>
-                  )}
-                  {visibleColumns.has('experience_years') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{candidate.experience_years} years</div>
-                    </td>
-                  )}
-                  {visibleColumns.has('education') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 truncate max-w-[160px]">{candidate.education}</div>
-                    </td>
-                  )}
-                  {visibleColumns.has('programming_languages') && (
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1 max-w-[180px]">
-                        {candidate.programming_languages.slice(0, 3).map((lang, idx) => (
-                          <span key={idx} className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
-                            {lang}
-                          </span>
-                        ))}
-                        {candidate.programming_languages.length > 3 && (
-                          <span className="text-xs text-gray-500">+{candidate.programming_languages.length - 3}</span>
-                        )}
-                      </div>
-                    </td>
-                  )}
-                  {visibleColumns.has('skills') && (
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1 max-w-[230px]">
-                        {candidate.skills.slice(0, 4).map((skill, idx) => (
-                          <span key={idx} className="inline-block bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded">
-                            {skill}
-                          </span>
-                        ))}
-                        {candidate.skills.length > 4 && (
-                          <span className="text-xs text-gray-500">+{candidate.skills.length - 4}</span>
-                        )}
-                      </div>
-                    </td>
-                  )}
-                  {visibleColumns.has('certifications') && (
-                    <td className="px-4 py-3">
-                      <div className="text-sm text-gray-900">
-                        {candidate.certifications.length > 0 ? (
-                          <div className="flex flex-wrap gap-1 max-w-[160px]">
-                            {candidate.certifications.slice(0, 2).map((cert, idx) => (
-                              <span key={idx} className="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded">
-                                {cert}
-                              </span>
-                            ))}
-                            {candidate.certifications.length > 2 && (
-                              <span className="text-xs text-gray-500">+{candidate.certifications.length - 2}</span>
+                          <div className="ml-3">
+                            <div className="text-sm font-medium text-gray-900 max-w-[150px] truncate">
+                              {candidate.name}
+                            </div>
+                            {/* NEW: Fraud indicator badges */}
+                            {fraudIndicators.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {fraudIndicators.map((indicator, idx) => (
+                                  <span 
+                                    key={idx}
+                                    className={`inline-flex items-center px-1 py-0.5 rounded text-xs font-bold ${
+                                      indicator.color === 'red' ? 'bg-red-600 text-white' :
+                                      indicator.color === 'orange' ? 'bg-orange-600 text-white' :
+                                      'bg-yellow-600 text-white'
+                                    }`}
+                                    title={indicator.title}
+                                  >
+                                    🚨{indicator.label}
+                                  </span>
+                                ))}
+                              </div>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-gray-400">None</span>
-                        )}
-                      </div>
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.has('email') && (
+                      <td className="px-4 py-3 text-sm text-gray-900 max-w-[200px] truncate">
+                        {candidate.email}
+                      </td>
+                    )}
+                    {visibleColumns.has('phone') && (
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        {candidate.phone}
+                      </td>
+                    )}
+                    {visibleColumns.has('location') && (
+                      <td className="px-4 py-3 text-sm text-gray-900 max-w-[140px] truncate">
+                        {candidate.location}
+                      </td>
+                    )}
+                    {visibleColumns.has('experience_years') && (
+                      <td className="px-4 py-3 text-sm text-gray-900 text-center">
+                        {candidate.experience_years}
+                      </td>
+                    )}
+                    {visibleColumns.has('education') && (
+                      <td className="px-4 py-3 text-sm text-gray-900 max-w-[160px] truncate">
+                        {candidate.education}
+                      </td>
+                    )}
+                    {visibleColumns.has('programming_languages') && (
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1 max-w-[180px]">
+                          {candidate.programming_languages.slice(0, 3).map((lang, langIndex) => (
+                            <span key={langIndex} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              {lang}
+                            </span>
+                          ))}
+                          {candidate.programming_languages.length > 3 && (
+                            <span className="text-xs text-gray-500">
+                              +{candidate.programming_languages.length - 3} more
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.has('skills') && (
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1 max-w-[230px]">
+                          {candidate.skills.slice(0, 4).map((skill, skillIndex) => (
+                            <span key={skillIndex} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                              {skill}
+                            </span>
+                          ))}
+                          {candidate.skills.length > 4 && (
+                            <span className="text-xs text-gray-500">
+                              +{candidate.skills.length - 4} more
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.has('certifications') && (
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1 max-w-[160px]">
+                          {candidate.certifications.slice(0, 2).map((cert, certIndex) => (
+                            <span key={certIndex} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              {cert}
+                            </span>
+                          ))}
+                          {candidate.certifications.length > 2 && (
+                            <span className="text-xs text-gray-500">
+                              +{candidate.certifications.length - 2} more
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.has('projects_count') && (
+                      <td className="px-4 py-3 text-sm text-gray-900 text-center">
+                        {candidate.projects_count}
+                      </td>
+                    )}
+                    {visibleColumns.has('total_score') && (
+                      <td className="px-4 py-3 text-center">
+                        <span className={`text-sm font-semibold ${getScoreClass(candidate.total_score)}`}>
+                          {Math.round(candidate.total_score)}%
+                        </span>
+                      </td>
+                    )}
+                    {visibleColumns.has('fraud_risk') && (
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col items-center space-y-1">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(candidate.fraud_risk)}`}>
+                            {candidate.fraud_risk.toUpperCase()}
+                          </span>
+                                                     {/* NEW: Show fraud issue count */}
+                           {resume?.fraud_analysis?.detected_issues?.length > 0 && (
+                             <div className="text-xs text-red-600 font-medium">
+                               {resume?.fraud_analysis?.detected_issues?.length} issue{resume?.fraud_analysis?.detected_issues?.length > 1 ? 's' : ''}
+                             </div>
+                           )}
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.has('upload_date') && (
+                      <td className="px-4 py-3 text-sm text-gray-500 text-center">
+                        {candidate.upload_date}
+                      </td>
+                    )}
+                    <td className="px-4 py-3 whitespace-nowrap text-right">
+                      <button
+                        onClick={() => setSelectedResume(candidate.id)}
+                        className="text-primary-600 hover:text-primary-900"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
                     </td>
-                  )}
-                  {visibleColumns.has('projects_count') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{candidate.projects_count}</div>
-                    </td>
-                  )}
-                  {visibleColumns.has('total_score') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className={`text-sm font-semibold ${getScoreClass(candidate.total_score)}`}>
-                        {candidate.total_score}/100
-                      </div>
-                    </td>
-                  )}
-                  {visibleColumns.has('fraud_risk') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getRiskBadgeClass(candidate.fraud_risk)}`}>
-                        {candidate.fraud_risk.toUpperCase()}
-                      </span>
-                    </td>
-                  )}
-                  {visibleColumns.has('upload_date') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{candidate.upload_date}</div>
-                    </td>
-                  )}
-                  <td className="px-4 py-3 whitespace-nowrap text-right">
-                    <button
-                      onClick={() => setSelectedResume(candidate.id)}
-                      className="text-primary-600 hover:text-primary-900"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

@@ -135,4 +135,21 @@ export const compareCandidates = async (candidateIds: string[], criteria: string
 }
 
 // Export the api instance for direct use
-export { api } 
+export { api }
+
+export async function getResumeDetail(resumeId: string) {
+  const response = await fetch(`${API_BASE_URL}/api/resume/${resumeId}`)
+  if (!response.ok) {
+    throw new Error('Failed to fetch resume details')
+  }
+  return response.json()
+}
+
+// NEW: Debug function for skill extraction
+export async function debugResumeSkills(resumeId: string) {
+  const response = await fetch(`${API_BASE_URL}/api/debug/resume/${resumeId}`)
+  if (!response.ok) {
+    throw new Error('Failed to debug resume skills')
+  }
+  return response.json()
+} 

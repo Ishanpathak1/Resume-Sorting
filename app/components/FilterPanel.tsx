@@ -59,6 +59,38 @@ export function FilterPanel({ filters, onFiltersChange }: FilterPanelProps) {
             </div>
 
             <div className="p-4 space-y-4">
+              {/* Quick Fraud Detection Toggle */}
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium text-red-800 mb-1">
+                      🚨 Show Only Fraudulent Resumes
+                    </label>
+                    <p className="text-xs text-red-600">
+                      Filter to show only resumes with detected fraud issues
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={localFilters.fraud_risk === 'high' || localFilters.fraud_risk === 'medium'}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setLocalFilters({ 
+                          ...localFilters, 
+                          fraud_risk: 'high' // Show high and medium risk
+                        })
+                      } else {
+                        setLocalFilters({ 
+                          ...localFilters, 
+                          fraud_risk: undefined 
+                        })
+                      }
+                    }}
+                    className="h-4 w-4 text-red-600 focus:ring-red-500 border-red-300 rounded"
+                  />
+                </div>
+              </div>
+
               {/* Name Search */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -154,10 +186,10 @@ export function FilterPanel({ filters, onFiltersChange }: FilterPanelProps) {
                 </div>
               </div>
 
-              {/* Fraud Risk Level */}
+              {/* Enhanced Fraud Risk Level */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Fraud Risk Level
+                  Detailed Fraud Risk Level
                 </label>
                 <select
                   value={localFilters.fraud_risk || ''}
@@ -168,10 +200,13 @@ export function FilterPanel({ filters, onFiltersChange }: FilterPanelProps) {
                   className="input-field"
                 >
                   <option value="">All Risk Levels</option>
-                  <option value="low">Low Risk</option>
-                  <option value="medium">Medium Risk</option>
-                  <option value="high">High Risk</option>
+                  <option value="low">✅ Low Risk (Verified)</option>
+                  <option value="medium">⚠️ Medium Risk (Caution)</option>
+                  <option value="high">🚨 High Risk (Fraudulent)</option>
                 </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  High risk includes hidden text, keyword stuffing, and other fraud indicators
+                </p>
               </div>
 
               {/* Education Level */}

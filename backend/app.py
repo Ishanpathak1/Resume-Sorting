@@ -10,6 +10,7 @@ from candidate_ranker import CandidateRanker
 from ai_analyzer import AIAnalyzer
 from database import Database
 import logging
+from typing import Dict
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -735,6 +736,121 @@ def analyze_job_posting(job_id):
     except Exception as e:
         logger.error(f"Error analyzing job posting: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/debug/resume/<resume_id>', methods=['GET'])
+def debug_resume_parsing(resume_id):
+    """Debug endpoint to analyze resume parsing issues"""
+    try:
+        resume = db.get_resume_by_id(resume_id)
+        if not resume:
+            return jsonify({"error": "Resume not found"}), 404
+        
+        # Get the original file path (if it still exists)
+        filename = resume.get('filename', '')
+        file_path = f"uploads/{resume_id}_{filename}"
+        
+        debug_info = {
+            "resume_id": resume_id,
+            "filename": filename,
+            "parsing_debug": {}
+        }
+        
+        # Check if file still exists
+        if os.path.exists(file_path):
+            debug_info["file_exists"] = True
+            
+            # Re-extract text to see current extraction
+            if file_path.lower().endswith('.pdf'):
+                raw_text = resume_parser._extract_text_from_pdf(file_path)
+            elif file_path.lower().endswith(('.docx', '.doc')):
+                raw_text = resume_parser._extract_text_from_docx(file_path)
+            else:
+                raw_text = "Unsupported format"
+            
+            debug_info["raw_text_length"] = len(raw_text)
+            debug_info["raw_text_preview"] = raw_text[:500] + "..." if len(raw_text) > 500 else raw_text
+            
+            # Debug skill extraction step by step
+            debug_info["skill_extraction_debug"] = _debug_skill_extraction(raw_text)
+            
+        else:
+            debug_info["file_exists"] = False
+            # Use stored raw text if available
+            stored_text = resume.get('parsed_data', {}).get('raw_text', '')
+            if stored_text:
+                debug_info["raw_text_length"] = len(stored_text)
+                debug_info["raw_text_preview"] = stored_text[:500] + "..." if len(stored_text) > 500 else stored_text
+                debug_info["skill_extraction_debug"] = _debug_skill_extraction(stored_text)
+            else:
+                debug_info["raw_text_preview"] = "No raw text available"
+        
+        # Compare with stored parsed data
+        debug_info["stored_skills"] = resume.get('parsed_data', {}).get('skills', {})
+        
+        return jsonify({"success": True, "debug_info": debug_info})
+        
+    except Exception as e:
+        logger.error(f"Error debugging resume {resume_id}: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+def _debug_skill_extraction(text: str) -> Dict:
+    """Debug function to show step-by-step skill extraction"""
+    debug_data = {
+        "text_length": len(text),
+        "text_preview": text[:200],
+        "skill_matches": {},
+        "all_found_skills": [],
+        "text_contains_analysis": {}
+    }
+    
+    text_lower = text.lower()
+    
+    # Test each skill category
+    skills_database = resume_parser.skills_database
+    
+    for category, skills_list in skills_database.items():
+        category_matches = []
+        category_debug = {}
+        
+        for skill in skills_list:
+            skill_lower = skill.lower()
+            is_found = skill_lower in text_lower
+            
+            if is_found:
+                # Find all occurrences and context
+                import re
+                pattern = re.escape(skill_lower)
+                matches = []
+                for match in re.finditer(pattern, text_lower):
+                    start = max(0, match.start() - 20)
+                    end = min(len(text), match.end() + 20)
+                    context = text[start:end].replace('\n', ' ')
+                    matches.append({
+                        "position": match.start(),
+                        "context": context
+                    })
+                
+                category_matches.append(skill)
+                category_debug[skill] = {
+                    "found": True,
+                    "matches": matches
+                }
+            else:
+                category_debug[skill] = {"found": False}
+        
+        if category_matches:
+            debug_data["skill_matches"][category] = category_matches
+        
+        debug_data["text_contains_analysis"][category] = category_debug
+    
+    # Collect all found skills
+    all_skills = []
+    for skills_list in debug_data["skill_matches"].values():
+        all_skills.extend(skills_list)
+    debug_data["all_found_skills"] = list(set(all_skills))
+    debug_data["total_skills_found"] = len(debug_data["all_found_skills"])
+    
+    return debug_data
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001) 
